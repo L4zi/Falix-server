@@ -23,7 +23,7 @@ class ServerStartView(discord.ui.View):
 @bot.tree.command(name="startserver", description="Start the Minecraft server")
 async def startserver(interaction: discord.Interaction):
     embed = discord.Embed(
-        description="Watch the ad, solve the CAPTCHA, hit **Start**.\n\n*This message deletes in 15 seconds.*",
+        description="Watch the ad, solve the CAPTCHA, hit **Start**.\n\n*Server Ip = hamaratwoweekphase.falixsrv.me*",
         color=discord.Color.green()
     )
     await interaction.response.send_message(embed=embed, view=ServerStartView())
