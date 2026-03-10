@@ -32,18 +32,16 @@ async def start_falix_server():
 async def startserver(interaction: discord.Interaction):
     await interaction.response.defer()
     success = await start_falix_server()
-
     if success:
         embed = discord.Embed(
-            description=f"✅ Server is starting!\n`{FULL_IP}`",
+            description=f"Server is starting!\n`{FULL_IP}`",
             color=discord.Color.green()
         )
     else:
         embed = discord.Embed(
-            description="❌ Failed to start the server. Try again.",
+            description="Failed to start the server. Try again.",
             color=discord.Color.red()
         )
-
     await interaction.followup.send(embed=embed)
     await asyncio.sleep(15)
     await interaction.delete_original_response()
@@ -54,9 +52,3 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
 
 bot.run(DISCORD_TOKEN)
-```
-
-Also update `requirements.txt`:
-```
-discord.py
-aiohttp
