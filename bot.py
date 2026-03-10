@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 import os
+import asyncio
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 SUBDOMAIN = os.getenv("FALIX_SUBDOMAIN")
@@ -19,22 +20,15 @@ class ServerStartView(discord.ui.View):
             emoji="🚀"
         ))
 
-@bot.tree.command(name="startserver", description="Get the link to start the Minecraft server")
+@bot.tree.command(name="startserver", description="Start the Minecraft server")
 async def startserver(interaction: discord.Interaction):
     embed = discord.Embed(
-        title="Start the Server",
-        description=(
-            f"Click the button below, the subdomain is already pre-filled for you!\n\n"
-            f"All you need to do:\n"
-            f"1. Watch the short ad\n"
-            f"2. Complete the CAPTCHA\n"
-            f"3. Hit Start Server\n\n"
-            f"Server address: {SUBDOMAIN}.falixsrv.me"
-        ),
+        description="Watch the ad, solve the CAPTCHA, hit **Start**.\n\n*This message deletes in 15 seconds.*",
         color=discord.Color.green()
     )
-    embed.set_footer(text="Server will stay online until manually stopped or timed out.")
     await interaction.response.send_message(embed=embed, view=ServerStartView())
+    await asyncio.sleep(15)
+    await interaction.delete_original_response()
 
 @bot.event
 async def on_ready():
