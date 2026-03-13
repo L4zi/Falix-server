@@ -1,2 +1,3 @@
 discord.py
-aiohttp
+huggingface_hub
+Pillow
