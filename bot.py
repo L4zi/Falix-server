@@ -9,8 +9,6 @@ from huggingface_hub import InferenceClient
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
-SUBDOMAIN = os.getenv("FALIX_SUBDOMAIN")
-FULL_IP = f"{SUBDOMAIN}.falixsrv.me"
 
 image_client = InferenceClient(provider="hf-inference", api_key=HF_TOKEN)
 chat_client = InferenceClient(api_key=HF_TOKEN)
@@ -28,7 +26,6 @@ SIXTYSEVEN_GIFS = [
     "https://tenor.com/view/67-67-kid-edit-analog-horror-phonk-gif-3349401281762803381",
 ]
 
-# 67 auto response
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -38,35 +35,6 @@ async def on_message(message):
         await message.channel.send(gif)
     await bot.process_commands(message)
 
-# Falix start server
-async def start_falix_server():
-    import aiohttp
-    url = "https://falixnodes.net/startserver"
-    data = {"IP": FULL_IP, "cf-turnstile-response": ""}
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Referer": "https://falixnodes.net/startserver",
-        "Origin": "https://falixnodes.net",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, data=data, headers=headers, allow_redirects=False) as r:
-            location = r.headers.get("location", "")
-            return "success" in location
-
-@bot.tree.command(name="startserver", description="Start the Minecraft server")
-async def startserver(interaction: discord.Interaction):
-    await interaction.response.defer()
-    success = await start_falix_server()
-    if success:
-        embed = discord.Embed(description=f"✅ Server is starting!\n`{FULL_IP}`", color=discord.Color.green())
-    else:
-        embed = discord.Embed(description="❌ Failed to start the server. Try again.", color=discord.Color.red())
-    await interaction.followup.send(embed=embed)
-    await asyncio.sleep(15)
-    await interaction.delete_original_response()
-
-# Image generation
 def generate_image(prompt):
     image = image_client.text_to_image(prompt, model="black-forest-labs/FLUX.1-schnell")
     buf = io.BytesIO()
@@ -88,7 +56,6 @@ async def imagine(interaction: discord.Interaction, prompt: str):
     except Exception as e:
         await interaction.followup.send(f"❌ Failed: `{e}`", ephemeral=True)
 
-# Ask AI
 @bot.tree.command(name="ask", description="Ask an AI a question")
 async def ask(interaction: discord.Interaction, prompt: str):
     await interaction.response.defer()
@@ -105,7 +72,6 @@ async def ask(interaction: discord.Interaction, prompt: str):
     except Exception as e:
         await interaction.followup.send(f"❌ Failed: `{e}`", ephemeral=True)
 
-# Coinflip
 @bot.tree.command(name="coinflip", description="Flip a coin")
 async def coinflip(interaction: discord.Interaction):
     await interaction.response.defer()
