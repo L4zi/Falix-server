@@ -97,17 +97,24 @@ async def soundboard(interaction: discord.Interaction):
     )
     await interaction.response.send_message(embed=embed, view=SoundboardView())
 
-@bot.tree.command(name="joinvoice", description="Make the bot join the voice channel")
-async def joinvoice(interaction: discord.Interaction):
-    channel = bot.get_channel(SOUND_CHANNEL_ID)
-    if channel is None:
-        await interaction.response.send_message("❌ Voice channel not found!", ephemeral=True)
-        return
+@bot.tree.command(name="joinvoice", description="Make the bot join a voice channel")
+async def joinvoice(interaction: discord.Interaction, channel_id: str = None):
+    if channel_id is not None:
+        channel = bot.get_channel(int(channel_id))
+        if channel is None or not isinstance(channel, discord.VoiceChannel):
+            await interaction.response.send_message("❌ Invalid channel ID!", ephemeral=True)
+            return
+    else:
+        channel = bot.get_channel(SOUND_CHANNEL_ID)
+        if channel is None:
+            await interaction.response.send_message("❌ Default voice channel not found!", ephemeral=True)
+            return
     if interaction.guild.voice_client:
-        await interaction.response.send_message("✅ Already in the voice channel!", ephemeral=True)
+        await interaction.guild.voice_client.move_to(channel)
+        await interaction.response.send_message(f"✅ Moved to **{channel.name}**!", ephemeral=True)
         return
     await channel.connect()
-    await interaction.response.send_message("✅ Joined the voice channel!", ephemeral=True)
+    await interaction.response.send_message(f"✅ Joined **{channel.name}**!", ephemeral=True)
     
 @bot.tree.command(name="leavevoice", description="Make the bot leave the voice channel")
 async def leavevoice(interaction: discord.Interaction):
