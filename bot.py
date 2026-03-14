@@ -19,11 +19,11 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 SIXTYSEVEN_GIFS = [
-    "https://tenor.com/view/6-7-6-7-mason-67-kid-67-mason-67-meme-gif-14085771333654173149",
-    "https://tenor.com/view/south-park-67-67-meme-67-kid-south-park-67-gif-5327133294253067463",
-    "https://tenor.com/view/67-meme-six-seven-six-seven-67-kid-gif-18263820823886954909",
-    "https://tenor.com/view/6-6-7-6-7-mason-67-kid-67-mason-gif-15019642513342783186",
-    "https://tenor.com/view/67-67-kid-edit-analog-horror-phonk-gif-3349401281762803381",
+    "https://giphy.com/gifs/67-six-seven-john-chungus-08uBcURaMq6vA93TGc",
+    "https://giphy.com/gifs/rigby-rigbycat-67-8rN9VXNb7dfU792YQt",
+    "https://giphy.com/gifs/cat-nub-nubcat-TKa7fQzChHylCQ89to",
+    "https://giphy.com/gifs/brainrot-67-hate-MKUOUJrFldIyi2hJyT",
+    "https://giphy.com/gifs/argentina-vtuber-mialygosa-B4VWevk4w1a95oBHqv",
 ]
 
 @bot.event
