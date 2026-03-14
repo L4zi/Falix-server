@@ -44,7 +44,7 @@ async def ask(interaction: discord.Interaction, prompt: str):
     await interaction.response.defer()
     try:
         result = client.chat_completion(
-            model="mistralai/Mistral-7B-Instruct-v0.3",
+            model="meta-llama/Llama-3.3-70B-Instruct",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=1024
         )
@@ -53,7 +53,7 @@ async def ask(interaction: discord.Interaction, prompt: str):
             description=f"**{prompt}**\n\n{answer}",
             color=discord.Color.blue()
         )
-        embed.set_footer(text="Powered by Mistral 7B")
+        embed.set_footer(text="Powered by FALIX BOT")
         await interaction.followup.send(embed=embed)
     except Exception as e:
         await interaction.followup.send(f"❌ Failed: `{e}`", ephemeral=True)
