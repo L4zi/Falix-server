@@ -3,23 +3,72 @@ from discord.ext import commands
 import os
 import asyncio
 import io
+import random
 from concurrent.futures import ThreadPoolExecutor
 from huggingface_hub import InferenceClient
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
+SUBDOMAIN = os.getenv("FALIX_SUBDOMAIN")
+FULL_IP = f"{SUBDOMAIN}.falixsrv.me"
 
-client = InferenceClient(provider="hf-inference", api_key=HF_TOKEN)
+image_client = InferenceClient(provider="hf-inference", api_key=HF_TOKEN)
+chat_client = InferenceClient(api_key=HF_TOKEN)
 executor = ThreadPoolExecutor()
 
 intents = discord.Intents.default()
+intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+SIXTYSEVEN_GIFS = [
+    "https://tenor.com/view/6-7-6-7-mason-67-kid-67-mason-67-meme-gif-14085771333654173149",
+    "https://tenor.com/view/south-park-67-67-meme-67-kid-south-park-67-gif-5327133294253067463",
+    "https://tenor.com/view/67-meme-six-seven-six-seven-67-kid-gif-18263820823886954909",
+    "https://tenor.com/view/6-6-7-6-7-mason-67-kid-67-mason-gif-15019642513342783186",
+    "https://tenor.com/view/67-67-kid-edit-analog-horror-phonk-gif-3349401281762803381",
+]
+
+# 67 auto response
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+    if "67" in message.content:
+        gif = random.choice(SIXTYSEVEN_GIFS)
+        await message.channel.send(gif)
+    await bot.process_commands(message)
+
+# Falix start server
+async def start_falix_server():
+    import aiohttp
+    url = "https://falixnodes.net/startserver"
+    data = {"IP": FULL_IP, "cf-turnstile-response": ""}
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Referer": "https://falixnodes.net/startserver",
+        "Origin": "https://falixnodes.net",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, data=data, headers=headers, allow_redirects=False) as r:
+            location = r.headers.get("location", "")
+            return "success" in location
+
+@bot.tree.command(name="startserver", description="Start the Minecraft server")
+async def startserver(interaction: discord.Interaction):
+    await interaction.response.defer()
+    success = await start_falix_server()
+    if success:
+        embed = discord.Embed(description=f"✅ Server is starting!\n`{FULL_IP}`", color=discord.Color.green())
+    else:
+        embed = discord.Embed(description="❌ Failed to start the server. Try again.", color=discord.Color.red())
+    await interaction.followup.send(embed=embed)
+    await asyncio.sleep(15)
+    await interaction.delete_original_response()
+
+# Image generation
 def generate_image(prompt):
-    image = client.text_to_image(
-        prompt,
-        model="black-forest-labs/FLUX.1-schnell"
-    )
+    image = image_client.text_to_image(prompt, model="black-forest-labs/FLUX.1-schnell")
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     buf.seek(0)
@@ -39,24 +88,38 @@ async def imagine(interaction: discord.Interaction, prompt: str):
     except Exception as e:
         await interaction.followup.send(f"❌ Failed: `{e}`", ephemeral=True)
 
+# Ask AI
 @bot.tree.command(name="ask", description="Ask an AI a question")
 async def ask(interaction: discord.Interaction, prompt: str):
     await interaction.response.defer()
     try:
-        result = client.chat_completion(
-            model="meta-llama/Llama-3.3-70B-Instruct",
+        result = chat_client.chat.completions.create(
+            model="deepseek-ai/DeepSeek-V3-0324",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=1024
         )
         answer = result.choices[0].message.content
-        embed = discord.Embed(
-            description=f"**{prompt}**\n\n{answer}",
-            color=discord.Color.blue()
-        )
-        embed.set_footer(text="Powered by FALIX BOT")
+        embed = discord.Embed(description=f"**{prompt}**\n\n{answer}", color=discord.Color.blue())
+        embed.set_footer(text="Powered by DeepSeek V3")
         await interaction.followup.send(embed=embed)
     except Exception as e:
         await interaction.followup.send(f"❌ Failed: `{e}`", ephemeral=True)
+
+# Coinflip
+@bot.tree.command(name="coinflip", description="Flip a coin")
+async def coinflip(interaction: discord.Interaction):
+    await interaction.response.defer()
+    suspense = ["🪙 Flipping the coin...", "🌀 It's spinning in the air...", "😮 Almost there..."]
+    msg = await interaction.followup.send(suspense[0])
+    await asyncio.sleep(1.2)
+    await msg.edit(content=suspense[1])
+    await asyncio.sleep(1.2)
+    await msg.edit(content=suspense[2])
+    await asyncio.sleep(1.2)
+    result = random.choice(["Heads", "Tails"])
+    emoji = "👑" if result == "Heads" else "✨"
+    embed = discord.Embed(title=f"{emoji} {result}!", color=discord.Color.gold())
+    await msg.edit(content=None, embed=embed)
 
 @bot.event
 async def on_ready():
