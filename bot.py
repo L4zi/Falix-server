@@ -108,6 +108,14 @@ async def joinvoice(interaction: discord.Interaction):
         return
     await channel.connect()
     await interaction.response.send_message("✅ Joined the voice channel!", ephemeral=True)
+    
+@bot.tree.command(name="leavevoice", description="Make the bot leave the voice channel")
+async def leavevoice(interaction: discord.Interaction):
+    if interaction.guild.voice_client is None:
+        await interaction.response.send_message("❌ Not in a voice channel!", ephemeral=True)
+        return
+    await interaction.guild.voice_client.disconnect()
+    await interaction.response.send_message("✅ Left the voice channel!", ephemeral=True)
 
 def generate_image(prompt):
     image = image_client.text_to_image(prompt, model="black-forest-labs/FLUX.1-schnell")
