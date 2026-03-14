@@ -1,4 +1,5 @@
-discord.py
+discord.py[voice]
 huggingface_hub
 Pillow
 aiohttp
+PyNaCl

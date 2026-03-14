@@ -6,9 +6,12 @@ import io
 import random
 from concurrent.futures import ThreadPoolExecutor
 from huggingface_hub import InferenceClient
+from sounds import SOUNDS
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
+
+SOUND_CHANNEL_ID = 1477710142425403523
 
 image_client = InferenceClient(provider="hf-inference", api_key=HF_TOKEN)
 chat_client = InferenceClient(api_key=HF_TOKEN)
@@ -34,6 +37,52 @@ async def on_message(message):
         gif = random.choice(SIXTYSEVEN_GIFS)
         await message.channel.send(gif)
     await bot.process_commands(message)
+
+async def play_sound(guild, sound_name):
+    source = SOUNDS[sound_name]
+    channel = guild.get_channel(SOUND_CHANNEL_ID)
+    if channel is None:
+        raise Exception("Voice channel not found!")
+    vc = guild.voice_client
+    if vc is None:
+        vc = await channel.connect()
+    elif vc.channel.id != SOUND_CHANNEL_ID:
+        await vc.move_to(channel)
+    if source.startswith("http"):
+        audio = discord.FFmpegPCMAudio(source, before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5")
+    else:
+        audio = discord.FFmpegPCMAudio(source)
+    vc.play(audio)
+
+class SoundboardView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        for name in SOUNDS:
+            self.add_item(SoundButton(name))
+
+class SoundButton(discord.ui.Button):
+    def __init__(self, sound_name):
+        super().__init__(label=sound_name.title(), style=discord.ButtonStyle.primary, custom_id=f"sound_{sound_name}")
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.guild.voice_client and interaction.guild.voice_client.is_playing():
+            await interaction.response.send_message("⏳ Already playing a sound, wait!", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            await play_sound(interaction.guild, self.label.lower())
+            await interaction.followup.send(f"✅ Played **{self.label}**!", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed: `{e}`", ephemeral=True)
+
+@bot.tree.command(name="soundboard", description="Open the soundboard")
+async def soundboard(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🔊 Soundboard",
+        description="Press a button to play a sound in the voice channel.",
+        color=discord.Color.orange()
+    )
+    await interaction.response.send_message(embed=embed, view=SoundboardView())
 
 def generate_image(prompt):
     image = image_client.text_to_image(prompt, model="black-forest-labs/FLUX.1-schnell")
@@ -90,6 +139,9 @@ async def coinflip(interaction: discord.Interaction):
 @bot.event
 async def on_ready():
     await bot.tree.sync()
+    channel = bot.get_channel(SOUND_CHANNEL_ID)
+    if channel:
+        await channel.connect()
     print(f"Logged in as {bot.user}")
 
 bot.run(DISCORD_TOKEN)
