@@ -64,6 +64,18 @@ class SoundboardView(discord.ui.View):
 class SoundButton(discord.ui.Button):
     def __init__(self, sound_name):
         super().__init__(label=sound_name.title(), style=discord.ButtonStyle.primary, custom_id=f"sound_{sound_name}")
+        self.sound_name = sound_name
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.guild.voice_client and interaction.guild.voice_client.is_playing():
+            await interaction.response.send_message("⏳ Already playing a sound, wait!", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            await play_sound(interaction.guild, self.sound_name)
+            await interaction.followup.send(f"✅ Played **{self.label}**!", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed: `{e}`", ephemeral=True)
 
     async def callback(self, interaction: discord.Interaction):
         if interaction.guild.voice_client and interaction.guild.voice_client.is_playing():
