@@ -4,12 +4,15 @@ import os
 import asyncio
 import io
 import random
+import aiohttp
 from concurrent.futures import ThreadPoolExecutor
 from huggingface_hub import InferenceClient
 from sounds import SOUNDS
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
+SUBDOMAIN = os.getenv("FALIX_SUBDOMAIN")
+FULL_IP = f"{SUBDOMAIN}.falixsrv.me"
 
 SOUND_CHANNEL_ID = 1477710142425403523
 
@@ -20,7 +23,6 @@ executor = ThreadPoolExecutor()
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
-
 
 SIXTYSEVEN_GIFS = [
     "https://giphy.com/gifs/67-six-seven-john-chungus-08uBcURaMq6vA93TGc",
@@ -38,6 +40,36 @@ async def on_message(message):
         gif = random.choice(SIXTYSEVEN_GIFS)
         await message.channel.send(gif)
     await bot.process_commands(message)
+
+# ── Falix server start ────────────────────────────────────
+
+async def start_falix_server():
+    url = "https://falixnodes.net/startserver"
+    data = {"IP": FULL_IP, "cf-turnstile-response": ""}
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Referer": "https://falixnodes.net/startserver",
+        "Origin": "https://falixnodes.net",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, data=data, headers=headers, allow_redirects=False) as r:
+            location = r.headers.get("location", "")
+            return "success" in location
+
+@bot.tree.command(name="startserver", description="Start the Minecraft server")
+async def startserver(interaction: discord.Interaction):
+    await interaction.response.defer()
+    success = await start_falix_server()
+    if success:
+        embed = discord.Embed(description=f"✅ Server is starting!\n`{FULL_IP}`", color=discord.Color.green())
+    else:
+        embed = discord.Embed(description="❌ Failed to start the server. Try again.", color=discord.Color.red())
+    await interaction.followup.send(embed=embed)
+    await asyncio.sleep(15)
+    await interaction.delete_original_response()
+
+# ── Soundboard ────────────────────────────────────────────
 
 async def play_sound(guild, sound_name):
     source = SOUNDS[sound_name]
@@ -75,17 +107,6 @@ class SoundButton(discord.ui.Button):
         except Exception as e:
             await interaction.followup.send(f"❌ Failed: `{e}`", ephemeral=True)
 
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.guild.voice_client and interaction.guild.voice_client.is_playing():
-            await interaction.response.send_message("⏳ Already playing a sound, wait!", ephemeral=True)
-            return
-        await interaction.response.defer(ephemeral=True)
-        try:
-            await play_sound(interaction.guild, self.label.lower())
-            await interaction.followup.send(f"✅ Played **{self.label}**!", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Failed: `{e}`", ephemeral=True)
-
 @bot.tree.command(name="soundboard", description="Open the soundboard")
 async def soundboard(interaction: discord.Interaction):
     embed = discord.Embed(
@@ -113,7 +134,7 @@ async def joinvoice(interaction: discord.Interaction, channel_id: str = None):
         return
     await channel.connect()
     await interaction.response.send_message(f"✅ Joined **{channel.name}**!", ephemeral=True)
-    
+
 @bot.tree.command(name="leavevoice", description="Make the bot leave the voice channel")
 async def leavevoice(interaction: discord.Interaction):
     if interaction.guild.voice_client is None:
@@ -121,6 +142,8 @@ async def leavevoice(interaction: discord.Interaction):
         return
     await interaction.guild.voice_client.disconnect()
     await interaction.response.send_message("✅ Left the voice channel!", ephemeral=True)
+
+# ── Image generation ──────────────────────────────────────
 
 def generate_image(prompt):
     image = image_client.text_to_image(prompt, model="black-forest-labs/FLUX.1-schnell")
@@ -143,6 +166,8 @@ async def imagine(interaction: discord.Interaction, prompt: str):
     except Exception as e:
         await interaction.followup.send(f"❌ Failed: `{e}`", ephemeral=True)
 
+# ── Ask AI ────────────────────────────────────────────────
+
 @bot.tree.command(name="ask", description="Ask an AI a question")
 async def ask(interaction: discord.Interaction, prompt: str):
     await interaction.response.defer()
@@ -158,6 +183,8 @@ async def ask(interaction: discord.Interaction, prompt: str):
         await interaction.followup.send(embed=embed)
     except Exception as e:
         await interaction.followup.send(f"❌ Failed: `{e}`", ephemeral=True)
+
+# ── Coinflip ──────────────────────────────────────────────
 
 @bot.tree.command(name="coinflip", description="Flip a coin")
 async def coinflip(interaction: discord.Interaction):
