@@ -7,6 +7,7 @@ import random
 import aiohttp
 from concurrent.futures import ThreadPoolExecutor
 from huggingface_hub import InferenceClient
+from PIL import Image
 from sounds import SOUNDS
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -55,14 +56,21 @@ async def start_falix_server():
     async with aiohttp.ClientSession() as session:
         async with session.post(url, data=data, headers=headers, allow_redirects=False) as r:
             location = r.headers.get("location", "")
-            return "success" in location
+            if "success" in location:
+                return "started"
+            elif "queued" in location:
+                return "queued"
+            else:
+                return "failed"
 
 @bot.tree.command(name="startserver", description="Start the Minecraft server")
 async def startserver(interaction: discord.Interaction):
     await interaction.response.defer()
-    success = await start_falix_server()
-    if success:
+    result = await start_falix_server()
+    if result == "started":
         embed = discord.Embed(description=f"✅ Server is starting!\n`{FULL_IP}`", color=discord.Color.green())
+    elif result == "queued":
+        embed = discord.Embed(description=f"⏳ Server is queued and will start shortly!\n`{FULL_IP}`", color=discord.Color.yellow())
     else:
         embed = discord.Embed(description="❌ Failed to start the server. Try again.", color=discord.Color.red())
     await interaction.followup.send(embed=embed)
@@ -145,26 +153,71 @@ async def leavevoice(interaction: discord.Interaction):
 
 # ── Image generation ──────────────────────────────────────
 
-def generate_image(prompt):
-    image = image_client.text_to_image(prompt, model="black-forest-labs/FLUX.1-schnell")
+def generate_image_text(prompt):
+    image = image_client.text_to_image(prompt, model="Tongyi-MAI/Z-Image-Turbo")
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     buf.seek(0)
     return buf
 
-@bot.tree.command(name="imagine", description="Generate an AI image from a prompt")
+def generate_image_from_image(prompt, input_image_bytes):
+    input_image = Image.open(io.BytesIO(input_image_bytes))
+    image = image_client.image_to_image(input_image, prompt=prompt, model="Tongyi-MAI/Z-Image-Edit")
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+class ImagineView(discord.ui.View):
+    def __init__(self, prompt):
+        super().__init__(timeout=60)
+        self.prompt = prompt
+
+    @discord.ui.button(label="🖼️ Text to Image", style=discord.ButtonStyle.primary)
+    async def text_to_image_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        try:
+            loop = asyncio.get_event_loop()
+            buf = await loop.run_in_executor(executor, generate_image_text, self.prompt)
+            file = discord.File(fp=buf, filename="image.png")
+            embed = discord.Embed(description=f"**{self.prompt}**", color=discord.Color.purple())
+            embed.set_image(url="attachment://image.png")
+            embed.set_footer(text="Text-to-Image • Z-Image-Turbo")
+            await interaction.followup.send(embed=embed, file=file)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed: `{e}`", ephemeral=True)
+
+    @discord.ui.button(label="🔄 Image to Image", style=discord.ButtonStyle.secondary)
+    async def image_to_image_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("📎 Send an image in this channel and I'll edit it!", ephemeral=True)
+
+        def check(m):
+            return m.author.id == interaction.user.id and len(m.attachments) > 0
+
+        try:
+            msg = await bot.wait_for("message", check=check, timeout=60)
+            await msg.add_reaction("⏳")
+            image_bytes = await msg.attachments[0].read()
+            loop = asyncio.get_event_loop()
+            buf = await loop.run_in_executor(executor, generate_image_from_image, self.prompt, image_bytes)
+            file = discord.File(fp=buf, filename="image.png")
+            embed = discord.Embed(description=f"**{self.prompt}**", color=discord.Color.purple())
+            embed.set_image(url="attachment://image.png")
+            embed.set_footer(text="Image-to-Image • Z-Image-Edit")
+            await msg.reply(embed=embed, file=file)
+            await msg.remove_reaction("⏳", bot.user)
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏱️ Timed out waiting for an image.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed: `{e}`", ephemeral=True)
+
+@bot.tree.command(name="imagine", description="Generate an AI image")
 async def imagine(interaction: discord.Interaction, prompt: str):
-    await interaction.response.defer()
-    try:
-        loop = asyncio.get_event_loop()
-        buf = await loop.run_in_executor(executor, generate_image, prompt)
-        file = discord.File(fp=buf, filename="image.png")
-        embed = discord.Embed(description=f"**{prompt}**", color=discord.Color.purple())
-        embed.set_image(url="attachment://image.png")
-        embed.set_footer(text="Generated by FLUX.1")
-        await interaction.followup.send(embed=embed, file=file)
-    except Exception as e:
-        await interaction.followup.send(f"❌ Failed: `{e}`", ephemeral=True)
+    embed = discord.Embed(
+        description=f"**{prompt}**\n\nChoose a mode:",
+        color=discord.Color.purple()
+    )
+    await interaction.response.send_message(embed=embed, view=ImagineView(prompt))
 
 # ── Ask AI ────────────────────────────────────────────────
 
