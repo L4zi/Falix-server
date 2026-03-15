@@ -41,14 +41,12 @@ async def on_message(message):
 
 async def play_sound(guild, sound_name):
     source = SOUNDS[sound_name]
-    channel = guild.get_channel(SOUND_CHANNEL_ID)
-    if channel is None:
-        raise Exception("Voice channel not found!")
     vc = guild.voice_client
     if vc is None:
+        channel = guild.get_channel(SOUND_CHANNEL_ID)
+        if channel is None:
+            raise Exception("Bot is not in a voice channel! Use /joinvoice first.")
         vc = await channel.connect()
-    elif vc.channel.id != SOUND_CHANNEL_ID:
-        await vc.move_to(channel)
     if source.startswith("http"):
         audio = discord.FFmpegPCMAudio(source, before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5")
     else:
