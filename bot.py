@@ -60,14 +60,22 @@ async def start_falix_server():
 @bot.tree.command(name="startserver", description="Start the Minecraft server")
 async def startserver(interaction: discord.Interaction):
     await interaction.response.defer()
-    success = await start_falix_server()
-    if success:
-        embed = discord.Embed(description=f"✅ Server is starting!\n`{FULL_IP}`", color=discord.Color.green())
-    else:
-        embed = discord.Embed(description="❌ Failed to start the server. Try again.", color=discord.Color.red())
-    await interaction.followup.send(embed=embed)
-    await asyncio.sleep(15)
-    await interaction.delete_original_response()
+    url = "https://falixnodes.net/startserver"
+    data = {"IP": FULL_IP, "cf-turnstile-response": ""}
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Referer": "https://falixnodes.net/startserver",
+        "Origin": "https://falixnodes.net",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, data=data, headers=headers, allow_redirects=False) as r:
+            location = r.headers.get("location", "no location header")
+            status = r.status
+            body = await r.text()
+    await interaction.followup.send(
+        f"**Status:** `{status}`\n**Location:** `{location}`\n**Body:** `{body[:300]}`"
+    )
 
 # ── Soundboard ────────────────────────────────────────────
 
