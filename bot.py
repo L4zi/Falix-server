@@ -74,8 +74,6 @@ async def startserver(interaction: discord.Interaction):
     else:
         embed = discord.Embed(description="❌ Failed to start the server. Try again.", color=discord.Color.red())
     await interaction.followup.send(embed=embed)
-    await asyncio.sleep(15)
-    await interaction.delete_original_response()
 
 # ── Soundboard ────────────────────────────────────────────
 
@@ -182,7 +180,7 @@ class ImagineView(discord.ui.View):
             file = discord.File(fp=buf, filename="image.png")
             embed = discord.Embed(description=f"**{self.prompt}**", color=discord.Color.purple())
             embed.set_image(url="attachment://image.png")
-            embed.set_footer(text="Text-to-Image • Z-Image-Turbo")
+            embed.set_footer(text="Text-to-Image •")
             await interaction.followup.send(embed=embed, file=file)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed: `{e}`", ephemeral=True)
@@ -203,7 +201,7 @@ class ImagineView(discord.ui.View):
             file = discord.File(fp=buf, filename="image.png")
             embed = discord.Embed(description=f"**{self.prompt}**", color=discord.Color.purple())
             embed.set_image(url="attachment://image.png")
-            embed.set_footer(text="Image-to-Image • Z-Image-Edit")
+            embed.set_footer(text="Image-to-Image •")
             await msg.reply(embed=embed, file=file)
             await msg.remove_reaction("⏳", bot.user)
         except asyncio.TimeoutError:
@@ -232,7 +230,7 @@ async def ask(interaction: discord.Interaction, prompt: str):
         )
         answer = result.choices[0].message.content
         embed = discord.Embed(description=f"**{prompt}**\n\n{answer}", color=discord.Color.blue())
-        embed.set_footer(text="Powered by DeepSeek V3")
+        embed.set_footer(text="Powered by FALIX BOT")
         await interaction.followup.send(embed=embed)
     except Exception as e:
         await interaction.followup.send(f"❌ Failed: `{e}`", ephemeral=True)
