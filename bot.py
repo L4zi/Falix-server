@@ -38,6 +38,7 @@ SIXTYSEVEN_GIFS = [
 soundboard_locked = False       # Global lock flag
 soundboard_locked_by = None     # Who locked it (user display name)
 SOUNDS_PER_PAGE = 12            # 4 rows × 3 buttons
+LOCK_ALLOWED_IDS = {1176877411934154806, 1338451898952581165}  # Users who can lock/unlock
 
 SOUND_NAMES = list(SOUNDS.keys())
 TOTAL_PAGES = (len(SOUND_NAMES) + SOUNDS_PER_PAGE - 1) // SOUNDS_PER_PAGE
@@ -53,8 +54,6 @@ BUTTON_STYLES = [
 
 @bot.event
 async def on_message(message):
-    global soundboard_locked, soundboard_locked_by
-
     if message.author.bot:
         return
 
@@ -62,31 +61,6 @@ async def on_message(message):
     if "67" in message.content:
         gif = random.choice(SIXTYSEVEN_GIFS)
         await message.channel.send(gif)
-
-    # "lloll" soundboard lock toggle
-    if message.content.strip().lower() == "lloll":
-        try:
-            await message.delete()
-        except discord.Forbidden:
-            pass  # no permission to delete — silently skip
-
-        soundboard_locked = not soundboard_locked
-        if soundboard_locked:
-            soundboard_locked_by = message.author.display_name
-            embed = discord.Embed(
-                title="🔒 Soundboard Locked",
-                description=f"**{message.author.display_name}** locked the soundboard.\nType `lloll` to unlock.",
-                color=discord.Color.red()
-            )
-        else:
-            embed = discord.Embed(
-                title="🔓 Soundboard Unlocked",
-                description=f"**{message.author.display_name}** unlocked the soundboard.",
-                color=discord.Color.green()
-            )
-            soundboard_locked_by = None
-        await message.channel.send(embed=embed, delete_after=8)
-        return  # don't process as a command
 
     await bot.process_commands(message)
 
@@ -174,7 +148,7 @@ def make_soundboard_embed(page: int) -> discord.Embed:
         value="\n".join(f"• {n.title()}" for n in names_on_page),
         inline=False
     )
-    embed.set_footer(text=f"Showing {len(names_on_page)} sounds  •  Type 'lloll' to lock/unlock")
+    embed.set_footer(text=f"Showing {len(names_on_page)} sounds  •  Page {page + 1} of {TOTAL_PAGES}")
     return embed
 
 
@@ -203,8 +177,8 @@ class SoundButton(discord.ui.Button):
 
 
 class NavButton(discord.ui.Button):
-    def __init__(self, label: str, target_page: int):
-        super().__init__(label=label, style=discord.ButtonStyle.secondary)
+    def __init__(self, arrow: str, target_page: int):
+        super().__init__(label=arrow, style=discord.ButtonStyle.secondary)
         self.target_page = target_page
 
     async def callback(self, interaction: discord.Interaction):
@@ -221,20 +195,25 @@ class LockToggleButton(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         global soundboard_locked, soundboard_locked_by
-        soundboard_locked = not soundboard_locked
 
+        if interaction.user.id not in LOCK_ALLOWED_IDS:
+            await interaction.response.send_message(
+                "❌ You don't have permission to lock/unlock the soundboard!", ephemeral=True
+            )
+            return
+
+        soundboard_locked = not soundboard_locked
         if soundboard_locked:
             soundboard_locked_by = interaction.user.display_name
-            msg = f"🔒 Locked by **{soundboard_locked_by}**"
+            msg = f"🔒 Soundboard locked by **{soundboard_locked_by}**"
         else:
-            msg = f"🔓 Unlocked by **{interaction.user.display_name}**"
+            msg = f"🔓 Soundboard unlocked by **{interaction.user.display_name}**"
             soundboard_locked_by = None
 
-        # Rebuild the current page view with updated lock state
+        # Detect current page from sibling NavButtons
         current_page = 0
-        # Find which page this view is on by inspecting sibling buttons
         for item in self.view.children:
-            if isinstance(item, NavButton) and item.label.startswith("◀"):
+            if isinstance(item, NavButton) and item.label == "◀":
                 current_page = item.target_page + 1
                 break
 
@@ -257,13 +236,13 @@ class SoundboardView(discord.ui.View):
             style = BUTTON_STYLES[i % len(BUTTON_STYLES)]
             self.add_item(SoundButton(name, style))
 
-        # Navigation row (always last row)
+        # Navigation row: ◀  🔒/🔓  ▶
         nav_row = []
         if page > 0:
-            nav_row.append(NavButton("◀ Prev", page - 1))
+            nav_row.append(NavButton("◀", page - 1))
         nav_row.append(LockToggleButton())
         if page < TOTAL_PAGES - 1:
-            nav_row.append(NavButton("Next ▶", page + 1))
+            nav_row.append(NavButton("▶", page + 1))
 
         for btn in nav_row:
             self.add_item(btn)
