@@ -285,15 +285,17 @@ async def leavevoice(interaction: discord.Interaction):
 # ── Image generation ──────────────────────────────────────
 
 def generate_image_text(prompt):
-    image = image_client.text_to_image(prompt, model="Tongyi-MAI/Z-Image-Turbo")
+    image = image_client.text_to_image(prompt, model="black-forest-labs/FLUX.1-schnell")
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     buf.seek(0)
     return buf
 
-def generate_image_from_image(prompt, input_image_bytes):
-    input_image = Image.open(io.BytesIO(input_image_bytes))
-    image = image_client.image_to_image(input_image, prompt=prompt, model="Tongyi-MAI/Z-Image-Edit")
+def generate_image_text(prompt):
+    image = image_client.text_to_image(
+        prompt,
+        model="stabilityai/stable-diffusion-xl-base-1.0"
+    )
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     buf.seek(0)
