@@ -33,13 +33,61 @@ SIXTYSEVEN_GIFS = [
     "https://giphy.com/gifs/argentina-vtuber-mialygosa-B4VWevk4w1a95oBHqv",
 ]
 
+# ── Soundboard state ──────────────────────────────────────
+
+soundboard_locked = False       # Global lock flag
+soundboard_locked_by = None     # Who locked it (user display name)
+SOUNDS_PER_PAGE = 12            # 4 rows × 3 buttons
+
+SOUND_NAMES = list(SOUNDS.keys())
+TOTAL_PAGES = (len(SOUND_NAMES) + SOUNDS_PER_PAGE - 1) // SOUNDS_PER_PAGE
+
+# Button style rotation so pages look colourful & organised
+BUTTON_STYLES = [
+    discord.ButtonStyle.primary,
+    discord.ButtonStyle.success,
+    discord.ButtonStyle.secondary,
+]
+
+# ── on_message ────────────────────────────────────────────
+
 @bot.event
 async def on_message(message):
+    global soundboard_locked, soundboard_locked_by
+
     if message.author.bot:
         return
+
+    # "67" gif trigger
     if "67" in message.content:
         gif = random.choice(SIXTYSEVEN_GIFS)
         await message.channel.send(gif)
+
+    # "lloll" soundboard lock toggle
+    if message.content.strip().lower() == "lloll":
+        try:
+            await message.delete()
+        except discord.Forbidden:
+            pass  # no permission to delete — silently skip
+
+        soundboard_locked = not soundboard_locked
+        if soundboard_locked:
+            soundboard_locked_by = message.author.display_name
+            embed = discord.Embed(
+                title="🔒 Soundboard Locked",
+                description=f"**{message.author.display_name}** locked the soundboard.\nType `lloll` to unlock.",
+                color=discord.Color.red()
+            )
+        else:
+            embed = discord.Embed(
+                title="🔓 Soundboard Unlocked",
+                description=f"**{message.author.display_name}** unlocked the soundboard.",
+                color=discord.Color.green()
+            )
+            soundboard_locked_by = None
+        await message.channel.send(embed=embed, delete_after=8)
+        return  # don't process as a command
+
     await bot.process_commands(message)
 
 # ── Falix server start ────────────────────────────────────
@@ -75,52 +123,158 @@ async def startserver(interaction: discord.Interaction):
         embed = discord.Embed(description="❌ Failed to start the server. Try again.", color=discord.Color.red())
     await interaction.followup.send(embed=embed)
 
-# ── Soundboard ────────────────────────────────────────────
+# ── Soundboard helpers ────────────────────────────────────
 
 async def play_sound(guild, sound_name):
+    """Connect if needed, stop any current audio, then play the requested sound."""
     source = SOUNDS[sound_name]
     vc = guild.voice_client
+
     if vc is None:
         channel = guild.get_channel(SOUND_CHANNEL_ID)
         if channel is None:
             raise Exception("Bot is not in a voice channel! Use /joinvoice first.")
         vc = await channel.connect()
+
+    # Stop whatever is currently playing so the new sound starts immediately
+    if vc.is_playing():
+        vc.stop()
+
     if source.startswith("http"):
-        audio = discord.FFmpegPCMAudio(source, before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5")
+        audio = discord.FFmpegPCMAudio(
+            source,
+            before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
+        )
     else:
         audio = discord.FFmpegPCMAudio(source)
+
     vc.play(audio)
 
-class SoundboardView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        for name in SOUNDS:
-            self.add_item(SoundButton(name))
+
+def make_soundboard_embed(page: int) -> discord.Embed:
+    """Build the embed for a given soundboard page."""
+    lock_status = (
+        f"🔒 **Locked** by {soundboard_locked_by}" if soundboard_locked
+        else "🔓 Unlocked"
+    )
+    embed = discord.Embed(
+        title="🎵 Soundboard",
+        description=(
+            f"Click a button to play a sound in voice.\n"
+            f"Status: {lock_status}"
+        ),
+        color=discord.Color.red() if soundboard_locked else discord.Color.orange()
+    )
+    # List sounds on this page in the embed for clarity
+    start = page * SOUNDS_PER_PAGE
+    end = min(start + SOUNDS_PER_PAGE, len(SOUND_NAMES))
+    names_on_page = SOUND_NAMES[start:end]
+    embed.add_field(
+        name=f"Page {page + 1} / {TOTAL_PAGES}",
+        value="\n".join(f"• {n.title()}" for n in names_on_page),
+        inline=False
+    )
+    embed.set_footer(text=f"Showing {len(names_on_page)} sounds  •  Type 'lloll' to lock/unlock")
+    return embed
+
+
+# ── Soundboard UI components ──────────────────────────────
 
 class SoundButton(discord.ui.Button):
-    def __init__(self, sound_name):
-        super().__init__(label=sound_name.title(), style=discord.ButtonStyle.primary, custom_id=f"sound_{sound_name}")
+    def __init__(self, sound_name: str, style: discord.ButtonStyle):
+        label = sound_name.title()
+        if len(label) > 80:
+            label = label[:77] + "…"
+        super().__init__(label=label, style=style, custom_id=f"sb_{sound_name[:80]}")
         self.sound_name = sound_name
 
     async def callback(self, interaction: discord.Interaction):
-        if interaction.guild.voice_client and interaction.guild.voice_client.is_playing():
-            await interaction.response.send_message("⏳ Already playing a sound, wait!", ephemeral=True)
+        if soundboard_locked:
+            await interaction.response.send_message(
+                f"🔒 Soundboard is locked by **{soundboard_locked_by}**!", ephemeral=True
+            )
             return
         await interaction.response.defer(ephemeral=True)
         try:
             await play_sound(interaction.guild, self.sound_name)
-            await interaction.followup.send(f"✅ Played **{self.label}**!", ephemeral=True)
+            await interaction.followup.send(f"▶️ Now playing **{self.label}**!", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed: `{e}`", ephemeral=True)
 
+
+class NavButton(discord.ui.Button):
+    def __init__(self, label: str, target_page: int):
+        super().__init__(label=label, style=discord.ButtonStyle.secondary)
+        self.target_page = target_page
+
+    async def callback(self, interaction: discord.Interaction):
+        view = SoundboardView(self.target_page)
+        embed = make_soundboard_embed(self.target_page)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class LockToggleButton(discord.ui.Button):
+    def __init__(self):
+        label = "🔓 Unlock" if soundboard_locked else "🔒 Lock"
+        style = discord.ButtonStyle.danger if not soundboard_locked else discord.ButtonStyle.success
+        super().__init__(label=label, style=style)
+
+    async def callback(self, interaction: discord.Interaction):
+        global soundboard_locked, soundboard_locked_by
+        soundboard_locked = not soundboard_locked
+
+        if soundboard_locked:
+            soundboard_locked_by = interaction.user.display_name
+            msg = f"🔒 Locked by **{soundboard_locked_by}**"
+        else:
+            msg = f"🔓 Unlocked by **{interaction.user.display_name}**"
+            soundboard_locked_by = None
+
+        # Rebuild the current page view with updated lock state
+        current_page = 0
+        # Find which page this view is on by inspecting sibling buttons
+        for item in self.view.children:
+            if isinstance(item, NavButton) and item.label.startswith("◀"):
+                current_page = item.target_page + 1
+                break
+
+        view = SoundboardView(current_page)
+        embed = make_soundboard_embed(current_page)
+        await interaction.response.edit_message(embed=embed, view=view)
+        await interaction.followup.send(msg, ephemeral=True)
+
+
+class SoundboardView(discord.ui.View):
+    def __init__(self, page: int = 0):
+        super().__init__(timeout=300)
+        self.page = page
+
+        start = page * SOUNDS_PER_PAGE
+        end = min(start + SOUNDS_PER_PAGE, len(SOUND_NAMES))
+        page_sounds = SOUND_NAMES[start:end]
+
+        for i, name in enumerate(page_sounds):
+            style = BUTTON_STYLES[i % len(BUTTON_STYLES)]
+            self.add_item(SoundButton(name, style))
+
+        # Navigation row (always last row)
+        nav_row = []
+        if page > 0:
+            nav_row.append(NavButton("◀ Prev", page - 1))
+        nav_row.append(LockToggleButton())
+        if page < TOTAL_PAGES - 1:
+            nav_row.append(NavButton("Next ▶", page + 1))
+
+        for btn in nav_row:
+            self.add_item(btn)
+
+# ── Soundboard commands ───────────────────────────────────
+
 @bot.tree.command(name="soundboard", description="Open the soundboard")
 async def soundboard(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="🔊 Soundboard",
-        description="Press a button to play a sound in the voice channel.",
-        color=discord.Color.orange()
-    )
-    await interaction.response.send_message(embed=embed, view=SoundboardView())
+    view = SoundboardView(page=0)
+    embed = make_soundboard_embed(page=0)
+    await interaction.response.send_message(embed=embed, view=view)
 
 @bot.tree.command(name="joinvoice", description="Make the bot join a voice channel")
 async def joinvoice(interaction: discord.Interaction, channel_id: str = None):
@@ -251,6 +405,8 @@ async def coinflip(interaction: discord.Interaction):
     emoji = "👑" if result == "Heads" else "✨"
     embed = discord.Embed(title=f"{emoji} {result}!", color=discord.Color.gold())
     await msg.edit(content=None, embed=embed)
+
+# ── Bot ready ─────────────────────────────────────────────
 
 @bot.event
 async def on_ready():
