@@ -23,4 +23,7 @@ SOUNDS = {
     "ASALAMELIKUM": "https://www.myinstants.com/media/sounds/asalamelikum.mp3",
     "Bakasushi": "https://www.myinstants.com/media/sounds/bakamitai-instant.mp3",
     "Go On Mute JP": "https://www.myinstants.com/media/sounds/go-on-mute-jp.mp3",
+    "Let me Know": "https://www.myinstants.com/media/sounds/let-me-know.mp3",
+    "Whitetee": "https://www.myinstants.com/media/sounds/white-tee-rizz_Pw3bPh4.mp3",
+    "Bass Da Da Da": "https://www.myinstants.com/media/sounds/bass-da-da-da.mp3",
 }

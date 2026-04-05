@@ -173,7 +173,7 @@ class SoundButton(discord.ui.Button):
             await play_sound(interaction.guild, self.sound_name)
             await interaction.followup.send(f"▶️ Now playing **{self.label}**!", ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"❌ Failed: `{e}`", ephemeral=True)
+            await interaction.followup.send(f" Failed: `{e}`", ephemeral=True)
 
 
 class NavButton(discord.ui.Button):
@@ -198,7 +198,7 @@ class LockToggleButton(discord.ui.Button):
 
         if interaction.user.id not in LOCK_ALLOWED_IDS:
             await interaction.response.send_message(
-                "❌ You don't have permission to lock/unlock the soundboard!", ephemeral=True
+                "You don't have permission to lock/unlock the soundboard!", ephemeral=True
             )
             return
 
