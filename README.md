@@ -1,1 +1,1 @@
-## big funnys bot
+## bot for our valorant server
