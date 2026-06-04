@@ -713,7 +713,10 @@ async def removedare(interaction: discord.Interaction, number: int):
     await interaction.response.send_message(f"Removed: *{removed}*", ephemeral=True)
 
 
+# ── Start Falix Server ───────────────────────────────────
+#
 # ── Bot ready ─────────────────────────────────────────────
+
 
 
 
