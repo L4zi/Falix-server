@@ -34,26 +34,84 @@ SIXTYSEVEN_GIFS = [
 ]
 
 # ═══════════════════════════════════════════════════════════
-# ELO SYSTEM
+# SOPHISTICATED ELO SYSTEM
 #
-# Default ELO: 100
-# Base gain/loss: ±10 for an even match
-# Adjustment: scaled by elo difference between the two players
+# Three compounding factors:
 #
-#   diff = winner_elo - loser_elo
-#   change = BASE_GAIN + round(diff * -0.04)
-#   clamped to min 4, max 18
+# 1. EXPECTED SCORE (classical Elo probability)
+#    E = 1 / (1 + 10^((opponent_elo - your_elo) / 400))
+#    Beating a much stronger player yields more; losing costs less.
 #
-# So beating someone way above you = ~+14-18
-#    losing to someone way below you = ~-14-18
-#    beating someone way below you  = ~+4
-#    losing to someone way above you = ~-4
+# 2. SCORE DOMINANCE MULTIPLIER (match scoreline)
+#    Based on how convincingly you won, inspired by MOV (margin of victory).
+#    score_ratio = winner_rounds / total_rounds   (range 0.5 → 1.0)
+#    dominance   = 0.5 + score_ratio              (range 1.0 → 1.5)
+#    Examples:
+#      10-1  → ratio=0.909 → dominance=1.41  (blowout, big bonus)
+#      10-8  → ratio=0.556 → dominance=1.06  (close, near neutral)
+#      10-9  → ratio=0.526 → dominance=1.03  (squeaker, tiny bonus)
+#
+# 3. K-FACTOR (confidence weight, decreases as you play more games)
+#    K = 40  for first 10 games  (placement phase, volatile)
+#    K = 28  for games 11-30     (calibration)
+#    K = 20  for 31+ games       (settled rating)
+#
+# FINAL FORMULA:
+#    raw_change = K * dominance * (1 - expected_score)
+#    winner gains +raw_change, loser loses -raw_change
+#    clamped to min 3, max 35
 # ═══════════════════════════════════════════════════════════
 
-def calc_elo_change(winner_elo: int, loser_elo: int) -> int:
-    diff = winner_elo - loser_elo          # positive = winner is stronger
-    change = BASE_GAIN + round(diff * -0.04)
-    return max(4, min(18, change))
+def _k_factor(games_played: int) -> float:
+    if games_played < 10:
+        return 40.0
+    if games_played < 30:
+        return 28.0
+    return 20.0
+
+def _expected_score(player_elo: int, opponent_elo: int) -> float:
+    """Probability [0,1] that player beats opponent given elo ratings."""
+    return 1.0 / (1.0 + 10 ** ((opponent_elo - player_elo) / 400.0))
+
+def _dominance_multiplier(winner_score: int, loser_score: int) -> float:
+    """
+    Returns 1.0 – 1.5 based on how dominant the win was.
+    A perfect blowout approaches 1.5; a 1-round margin approaches 1.0.
+    """
+    total = winner_score + loser_score
+    if total == 0:
+        return 1.0
+    ratio = winner_score / total        # 0.5 (closest) → 1.0 (shutout)
+    return 0.5 + ratio                  # maps to 1.0 → 1.5
+
+def calc_elo_change(
+    winner_elo: int,
+    loser_elo: int,
+    winner_score: int,
+    loser_score: int,
+    winner_games_played: int,
+    loser_games_played: int,
+) -> tuple[int, int]:
+    """
+    Returns (winner_gain, loser_loss) as positive integers.
+    The two values can differ slightly because each player has their own K-factor.
+    """
+    dom   = _dominance_multiplier(winner_score, loser_score)
+    e_win = _expected_score(winner_elo, loser_elo)   # prob winner was expected to win
+    e_los = 1.0 - e_win                              # prob loser was expected to win
+
+    k_win = _k_factor(winner_games_played)
+    k_los = _k_factor(loser_games_played)
+
+    # Winner always gets (1 - expected) which is higher when they were the underdog
+    winner_gain = round(k_win * dom * (1.0 - e_win))
+    # Loser loses based on how much they were expected to win (hurts more if favoured)
+    loser_loss  = round(k_los * dom * e_los)
+
+    winner_gain = max(3, min(35, winner_gain))
+    loser_loss  = max(3, min(35, loser_loss))
+
+    return winner_gain, loser_loss
 
 # ── JSON helpers ──────────────────────────────────────────
 
@@ -142,8 +200,12 @@ def make_history_embed(data: dict, name: str):
         for d in reversed(recent):
             result = "W" if d["winner"] == canonical else "L"
             opp    = d["loser"] if d["winner"] == canonical else d["winner"]
-            sign   = "+" if result == "W" else "-"
-            lines.append(f"{result}   {opp:<16} {sign}{d['elo_change']} ELO   {d['date']}")
+            score  = d.get("score", "?-?")
+            if result == "W":
+                delta = f"+{d.get('w_elo_change', d.get('elo_change', '?'))}"
+            else:
+                delta = f"-{d.get('l_elo_change', d.get('elo_change', '?'))}"
+            lines.append(f"{result}   {opp:<14} {score:<7} {delta:<7} {d['date']}")
         embed.add_field(
             name="Last 5 Duels",
             value=f"```\n{chr(10).join(lines)}\n```",
@@ -334,11 +396,29 @@ async def removeplayer(interaction: discord.Interaction, name: str):
     lb_save(data)
     await interaction.response.send_message(f"✅ Removed **{canonical}** and all their duels.", ephemeral=True)
 
-@bot.tree.command(name="recordwin", description="[Admin] Record a skirmish result")
-async def recordwin(interaction: discord.Interaction, winner: str, loser: str):
+@bot.tree.command(name="recordwin", description="[Admin] Record a skirmish result with score")
+async def recordwin(
+    interaction: discord.Interaction,
+    winner: str,
+    loser: str,
+    winner_score: int,
+    loser_score: int,
+):
+    """
+    winner / loser : player names
+    winner_score   : rounds won by winner  (e.g. 10)
+    loser_score    : rounds won by loser   (e.g. 3)
+    """
     if not is_admin(interaction):
         await interaction.response.send_message("❌ You don't have permission to use this.", ephemeral=True)
         return
+
+    if winner_score <= loser_score:
+        await interaction.response.send_message(
+            "❌ Winner score must be higher than loser score.", ephemeral=True
+        )
+        return
+
     data = lb_load()
     w = lb_find(data, winner)
     l = lb_find(data, loser)
@@ -353,23 +433,54 @@ async def recordwin(interaction: discord.Interaction, winner: str, loser: str):
         return
 
     from datetime import date
-    change = calc_elo_change(data["players"][w], data["players"][l])
-    data["players"][w] += change
-    data["players"][l] -= change
+
+    w_games = sum(1 for d in data["duels"] if d["winner"] == w or d["loser"] == w)
+    l_games = sum(1 for d in data["duels"] if d["winner"] == l or d["loser"] == l)
+
+    w_elo_before = data["players"][w]
+    l_elo_before = data["players"][l]
+
+    w_gain, l_loss = calc_elo_change(
+        w_elo_before, l_elo_before,
+        winner_score, loser_score,
+        w_games, l_games
+    )
+
+    data["players"][w] += w_gain
+    data["players"][l] -= l_loss
+    data["players"][l]  = max(0, data["players"][l])   # floor at 0
+
+    total_rounds = winner_score + loser_score
+    closeness = round((loser_score / total_rounds) * 100)   # % how close the match was
+
     data["duels"].append({
         "winner": w, "loser": l,
-        "elo_change": change,
+        "score": f"{winner_score}-{loser_score}",
+        "w_elo_change": w_gain,
+        "l_elo_change": l_loss,
+        # keep legacy key so old history still works
+        "elo_change": w_gain,
         "date": str(date.today())
     })
     lb_save(data)
 
+    # build match verdict label
+    if closeness >= 47:
+        verdict = "VERY CLOSE"
+    elif closeness >= 35:
+        verdict = "COMPETITIVE"
+    elif closeness >= 20:
+        verdict = "DOMINANT"
+    else:
+        verdict = "DOMINANT"
+
     embed = discord.Embed(title="DUEL RECORDED", color=0x00d26a)
-    embed.add_field(name="Winner",         value=w,                              inline=True)
-    embed.add_field(name="Loser",          value=l,                              inline=True)
-    embed.add_field(name="ELO Shift",      value=f"+{change} / -{change}",       inline=True)
-    embed.add_field(name=f"{w} — New ELO", value=str(data["players"][w]),        inline=True)
-    embed.add_field(name=f"{l} — New ELO", value=str(data["players"][l]),        inline=True)
-    embed.add_field(name="\u200b",        value="\u200b",                      inline=True)
+    embed.add_field(name="Winner",           value=w,                                  inline=True)
+    embed.add_field(name="Loser",            value=l,                                  inline=True)
+    embed.add_field(name="Score",            value=f"{winner_score} – {loser_score}  [{verdict}]", inline=True)
+    embed.add_field(name=f"{w}",             value=f"{w_elo_before} → **{data['players'][w]}** (+{w_gain})", inline=True)
+    embed.add_field(name=f"{l}",             value=f"{l_elo_before} → **{data['players'][l]}** (-{l_loss})", inline=True)
+    embed.add_field(name="\u200b",          value="\u200b",                          inline=True)
     embed.set_footer(text="big funnys bot")
     await interaction.response.send_message(embed=embed)
 
@@ -383,12 +494,16 @@ async def undolast(interaction: discord.Interaction):
         await interaction.response.send_message("❌ No duels to undo.", ephemeral=True)
         return
     last = data["duels"].pop()
-    w, l, change = last["winner"], last["loser"], last["elo_change"]
-    if w in data["players"]: data["players"][w] -= change
-    if l in data["players"]: data["players"][l] += change
+    w, l = last["winner"], last["loser"]
+    w_gain = last.get("w_elo_change", last.get("elo_change", 10))
+    l_loss = last.get("l_elo_change", last.get("elo_change", 10))
+    if w in data["players"]: data["players"][w] -= w_gain
+    if l in data["players"]: data["players"][l] += l_loss
     lb_save(data)
+    score = last.get("score", "?")
     await interaction.response.send_message(
-        f"↩️ Undone: **{w}** beat **{l}** on {last['date']}  (ELO reversed ±{change})", ephemeral=True
+        f"Undone: **{w}** beat **{l}** ({score}) on {last['date']}  —  ELO reversed (+{w_gain} / -{l_loss})",
+        ephemeral=True
     )
 
 @bot.tree.command(name="clearleaderboard", description="[Admin] Wipe all players and duels")
@@ -457,7 +572,150 @@ async def coinflip(interaction: discord.Interaction):
     emoji  = "👑" if result == "Heads" else "✨"
     await msg.edit(content=None, embed=discord.Embed(title=f"{emoji} {result}!", color=discord.Color.gold()))
 
+# ── Truth or Dare ─────────────────────────────────────────
+
+TOD_FILE = "truthordare.json"
+
+def tod_load() -> dict:
+    if not os.path.exists(TOD_FILE):
+        return {"truths": [], "dares": []}
+    with open(TOD_FILE) as f:
+        return json.load(f)
+
+def tod_save(data: dict):
+    with open(TOD_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+class TruthOrDareView(discord.ui.View):
+    def __init__(self, player1: str, player2: str):
+        super().__init__(timeout=120)
+        self.player1 = player1
+        self.player2 = player2
+
+    @discord.ui.button(label="Truth", style=discord.ButtonStyle.primary)
+    async def truth_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = tod_load()
+        if not data["truths"]:
+            await interaction.response.send_message(
+                "No truths added yet. Use `/addtruth` to add some.", ephemeral=True
+            )
+            return
+        question = random.choice(data["truths"])
+        embed = discord.Embed(color=0x4361ee)
+        embed.add_field(name="TRUTH", value=question, inline=False)
+        embed.set_footer(text=f"{self.player1} must answer  ·  big funnys bot")
+        await interaction.response.send_message(embed=embed)
+
+    @discord.ui.button(label="Dare", style=discord.ButtonStyle.danger)
+    async def dare_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = tod_load()
+        if not data["dares"]:
+            await interaction.response.send_message(
+                "No dares added yet. Use `/adddare` to add some.", ephemeral=True
+            )
+            return
+        # {player1} and {player2} can be used as placeholders in the dare text
+        dare = random.choice(data["dares"])
+        dare = dare.replace("{player1}", self.player1).replace("{player2}", self.player2)
+        embed = discord.Embed(color=0xe5383b)
+        embed.add_field(name="DARE", value=dare, inline=False)
+        embed.set_footer(text=f"{self.player1} must do this  ·  big funnys bot")
+        await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="truthordare", description="Start a truth or dare between two players")
+async def truthordare(interaction: discord.Interaction, player1: str, player2: str):
+    data = tod_load()
+    t_count = len(data["truths"])
+    d_count = len(data["dares"])
+    embed = discord.Embed(
+        title="TRUTH OR DARE",
+        description=f"**{player1}** — pick your poison.\n\nTruth: answer honestly.\nDare: involves **{player2}**.",
+        color=0x1a1a2e
+    )
+    embed.set_footer(text=f"{t_count} truths  ·  {d_count} dares in pool  ·  big funnys bot")
+    await interaction.response.send_message(embed=embed, view=TruthOrDareView(player1, player2))
+
+
+@bot.tree.command(name="addtruth", description="Add a truth question to the pool")
+async def addtruth(interaction: discord.Interaction, question: str):
+    data = tod_load()
+    data["truths"].append(question)
+    tod_save(data)
+    await interaction.response.send_message(
+        f"Added to truths. Pool now has **{len(data['truths'])}** questions.", ephemeral=True
+    )
+
+
+@bot.tree.command(name="adddare", description="Add a dare to the pool — use {player1} and {player2} as placeholders")
+async def adddare(interaction: discord.Interaction, dare: str):
+    data = tod_load()
+    data["dares"].append(dare)
+    tod_save(data)
+    await interaction.response.send_message(
+        f"Added to dares. Pool now has **{len(data['dares'])}** dares.", ephemeral=True
+    )
+
+
+@bot.tree.command(name="listtruthsdares", description="See all truths and dares in the pool")
+async def listtruthsdares(interaction: discord.Interaction):
+    data = tod_load()
+    embed = discord.Embed(title="TRUTH OR DARE  ·  POOL", color=0x1a1a2e)
+
+    if data["truths"]:
+        embed.add_field(
+            name=f"TRUTHS ({len(data['truths'])})",
+            value="\n".join(f"`{i+1}.` {t}" for i, t in enumerate(data["truths"][:10])) +
+                  (f"\n*... and {len(data['truths'])-10} more*" if len(data["truths"]) > 10 else ""),
+            inline=False
+        )
+    else:
+        embed.add_field(name="TRUTHS", value="None added yet.", inline=False)
+
+    if data["dares"]:
+        embed.add_field(
+            name=f"DARES ({len(data['dares'])})",
+            value="\n".join(f"`{i+1}.` {d}" for i, d in enumerate(data["dares"][:10])) +
+                  (f"\n*... and {len(data['dares'])-10} more*" if len(data["dares"]) > 10 else ""),
+            inline=False
+        )
+    else:
+        embed.add_field(name="DARES", value="None added yet.", inline=False)
+
+    embed.set_footer(text="big funnys bot")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="removetruth", description="Remove a truth by its number (use /listtruthsdares to see numbers)")
+async def removetruth(interaction: discord.Interaction, number: int):
+    data = tod_load()
+    if number < 1 or number > len(data["truths"]):
+        await interaction.response.send_message(
+            f"Invalid number. There are {len(data['truths'])} truths.", ephemeral=True
+        )
+        return
+    removed = data["truths"].pop(number - 1)
+    tod_save(data)
+    await interaction.response.send_message(f"Removed: *{removed}*", ephemeral=True)
+
+
+@bot.tree.command(name="removedare", description="Remove a dare by its number (use /listtruthsdares to see numbers)")
+async def removedare(interaction: discord.Interaction, number: int):
+    data = tod_load()
+    if number < 1 or number > len(data["dares"]):
+        await interaction.response.send_message(
+            f"Invalid number. There are {len(data['dares'])} dares.", ephemeral=True
+        )
+        return
+    removed = data["dares"].pop(number - 1)
+    tod_save(data)
+    await interaction.response.send_message(f"Removed: *{removed}*", ephemeral=True)
+
+
 # ── Bot ready ─────────────────────────────────────────────
+
+
 
 @bot.event
 async def on_ready():
