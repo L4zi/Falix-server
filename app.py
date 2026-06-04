@@ -33,35 +33,6 @@ SIXTYSEVEN_GIFS = [
     "https://giphy.com/gifs/argentina-vtuber-mialygosa-B4VWevk4w1a95oBHqv",
 ]
 
-# ═══════════════════════════════════════════════════════════
-# SOPHISTICATED ELO SYSTEM
-#
-# Three compounding factors:
-#
-# 1. EXPECTED SCORE (classical Elo probability)
-#    E = 1 / (1 + 10^((opponent_elo - your_elo) / 400))
-#    Beating a much stronger player yields more; losing costs less.
-#
-# 2. SCORE DOMINANCE MULTIPLIER (match scoreline)
-#    Based on how convincingly you won, inspired by MOV (margin of victory).
-#    score_ratio = winner_rounds / total_rounds   (range 0.5 → 1.0)
-#    dominance   = 0.5 + score_ratio              (range 1.0 → 1.5)
-#    Examples:
-#      10-1  → ratio=0.909 → dominance=1.41  (blowout, big bonus)
-#      10-8  → ratio=0.556 → dominance=1.06  (close, near neutral)
-#      10-9  → ratio=0.526 → dominance=1.03  (squeaker, tiny bonus)
-#
-# 3. K-FACTOR (confidence weight, decreases as you play more games)
-#    K = 40  for first 10 games  (placement phase, volatile)
-#    K = 28  for games 11-30     (calibration)
-#    K = 20  for 31+ games       (settled rating)
-#
-# FINAL FORMULA:
-#    raw_change = K * dominance * (1 - expected_score)
-#    winner gains +raw_change, loser loses -raw_change
-#    clamped to min 3, max 35
-# ═══════════════════════════════════════════════════════════
-
 def _k_factor(games_played: int) -> float:
     if games_played < 10:
         return 40.0
@@ -711,11 +682,6 @@ async def removedare(interaction: discord.Interaction, number: int):
     removed = data["dares"].pop(number - 1)
     tod_save(data)
     await interaction.response.send_message(f"Removed: *{removed}*", ephemeral=True)
-
-
-# ── Start Falix Server ───────────────────────────────────
-#
-# ── Bot ready ─────────────────────────────────────────────
 
 
 
