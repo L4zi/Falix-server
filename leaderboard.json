@@ -1,0 +1,92 @@
+{
+  "players": {
+    "L4zi": 27,
+    "V1ndicator": 98,
+    "Syte": 177,
+    "Hashim": 100,
+    "Umer": 98
+  },
+  "duels": [
+    {
+      "winner": "V1ndicator",
+      "loser": "L4zi",
+      "elo_change": 10,
+      "date": "2026-05-17"
+    },
+    {
+      "winner": "L4zi",
+      "loser": "V1ndicator",
+      "elo_change": 11,
+      "date": "2026-05-17"
+    },
+    {
+      "winner": "Umer",
+      "loser": "L4zi",
+      "elo_change": 10,
+      "date": "2026-05-17"
+    },
+    {
+      "winner": "L4zi",
+      "loser": "Umer",
+      "elo_change": 11,
+      "date": "2026-05-17"
+    },
+    {
+      "winner": "Umer",
+      "loser": "L4zi",
+      "elo_change": 10,
+      "date": "2026-05-17"
+    },
+    {
+      "winner": "L4zi",
+      "loser": "Umer",
+      "elo_change": 11,
+      "date": "2026-05-17"
+    },
+    {
+      "winner": "Syte",
+      "loser": "L4zi",
+      "score": "10-7",
+      "w_elo_change": 22,
+      "l_elo_change": 22,
+      "elo_change": 22,
+      "date": "2026-05-20"
+    },
+    {
+      "winner": "Syte",
+      "loser": "L4zi",
+      "score": "10-6",
+      "w_elo_change": 20,
+      "l_elo_change": 20,
+      "elo_change": 20,
+      "date": "2026-05-20"
+    },
+    {
+      "winner": "Syte",
+      "loser": "L4zi",
+      "score": "10-9",
+      "w_elo_change": 16,
+      "l_elo_change": 16,
+      "elo_change": 16,
+      "date": "2026-05-20"
+    },
+    {
+      "winner": "V1ndicator",
+      "loser": "L4zi",
+      "score": "10-8",
+      "w_elo_change": 18,
+      "l_elo_change": 18,
+      "elo_change": 18,
+      "date": "2026-05-20"
+    },
+    {
+      "winner": "Syte",
+      "loser": "V1ndicator",
+      "score": "10-8",
+      "w_elo_change": 19,
+      "l_elo_change": 19,
+      "elo_change": 19,
+      "date": "2026-05-20"
+    }
+  ]
+}
