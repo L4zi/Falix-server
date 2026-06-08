@@ -6,20 +6,21 @@ import asyncio
 import random
 import json
 import aiohttp
+import cloudscraper
+import concurrent.futures
 from dotenv import load_dotenv
 from sounds import SOUNDS
 
 load_dotenv()
 
 DISCORD_TOKEN = os.environ["BOT_TOKEN"]
-HF_TOKEN = os.environ.get("HF_TOKEN", "")
 
 SOUND_CHANNEL_ID = 1477710142425403523
 LEADERBOARD_FILE = "leaderboard.json"
 ADMIN_ID = 1176877411934154806
 
 DEFAULT_ELO = 100
-BASE_GAIN   = 10   # elo gained/lost in a perfectly even match
+BASE_GAIN   = 10
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -33,6 +34,10 @@ SIXTYSEVEN_GIFS = [
     "https://giphy.com/gifs/argentina-vtuber-mialygosa-B4VWevk4w1a95oBHqv",
 ]
 
+# ═══════════════════════════════════════════════════════════
+# ELO SYSTEM
+# ═══════════════════════════════════════════════════════════
+
 def _k_factor(games_played: int) -> float:
     if games_played < 10:
         return 40.0
@@ -41,19 +46,14 @@ def _k_factor(games_played: int) -> float:
     return 20.0
 
 def _expected_score(player_elo: int, opponent_elo: int) -> float:
-    """Probability [0,1] that player beats opponent given elo ratings."""
     return 1.0 / (1.0 + 10 ** ((opponent_elo - player_elo) / 400.0))
 
 def _dominance_multiplier(winner_score: int, loser_score: int) -> float:
-    """
-    Returns 1.0 – 1.5 based on how dominant the win was.
-    A perfect blowout approaches 1.5; a 1-round margin approaches 1.0.
-    """
     total = winner_score + loser_score
     if total == 0:
         return 1.0
-    ratio = winner_score / total        # 0.5 (closest) → 1.0 (shutout)
-    return 0.5 + ratio                  # maps to 1.0 → 1.5
+    ratio = winner_score / total
+    return 0.5 + ratio
 
 def calc_elo_change(
     winner_elo: int,
@@ -63,20 +63,14 @@ def calc_elo_change(
     winner_games_played: int,
     loser_games_played: int,
 ) -> tuple[int, int]:
-    """
-    Returns (winner_gain, loser_loss) as positive integers.
-    The two values can differ slightly because each player has their own K-factor.
-    """
     dom   = _dominance_multiplier(winner_score, loser_score)
-    e_win = _expected_score(winner_elo, loser_elo)   # prob winner was expected to win
-    e_los = 1.0 - e_win                              # prob loser was expected to win
+    e_win = _expected_score(winner_elo, loser_elo)
+    e_los = 1.0 - e_win
 
     k_win = _k_factor(winner_games_played)
     k_los = _k_factor(loser_games_played)
 
-    # Winner always gets (1 - expected) which is higher when they were the underdog
     winner_gain = round(k_win * dom * (1.0 - e_win))
-    # Loser loses based on how much they were expected to win (hurts more if favoured)
     loser_loss  = round(k_los * dom * e_los)
 
     winner_gain = max(3, min(35, winner_gain))
@@ -97,14 +91,12 @@ def lb_save(data: dict):
         json.dump(data, f, indent=2)
 
 def lb_find(data: dict, name: str):
-    """Case-insensitive lookup; returns canonical name or None."""
     for p in data["players"]:
         if p.lower() == name.lower():
             return p
     return None
 
 def lb_sorted(data: dict) -> list:
-    """Returns list of (name, elo) tuples sorted by elo desc."""
     return sorted(data["players"].items(), key=lambda x: -x[1])
 
 # ── Embed builders ────────────────────────────────────────
@@ -240,7 +232,7 @@ def make_soundboard_embed(page: int) -> discord.Embed:
         value="\n".join(f"• {n.title()}" for n in SOUND_NAMES[start:end]),
         inline=False
     )
-    embed.set_footer(text=f"Showing {end-start} sounds  •  Page {page+1} of {TOTAL_PAGES}")
+    embed.set_footer(text=f"Showing {end-start} sounds  ·  Page {page+1} of {TOTAL_PAGES}")
     return embed
 
 class SoundButton(discord.ui.Button):
@@ -375,11 +367,6 @@ async def recordwin(
     winner_score: int,
     loser_score: int,
 ):
-    """
-    winner / loser : player names
-    winner_score   : rounds won by winner  (e.g. 10)
-    loser_score    : rounds won by loser   (e.g. 3)
-    """
     if not is_admin(interaction):
         await interaction.response.send_message("❌ You don't have permission to use this.", ephemeral=True)
         return
@@ -419,23 +406,21 @@ async def recordwin(
 
     data["players"][w] += w_gain
     data["players"][l] -= l_loss
-    data["players"][l]  = max(0, data["players"][l])   # floor at 0
+    data["players"][l]  = max(0, data["players"][l])
 
     total_rounds = winner_score + loser_score
-    closeness = round((loser_score / total_rounds) * 100)   # % how close the match was
+    closeness = round((loser_score / total_rounds) * 100)
 
     data["duels"].append({
         "winner": w, "loser": l,
         "score": f"{winner_score}-{loser_score}",
         "w_elo_change": w_gain,
         "l_elo_change": l_loss,
-        # keep legacy key so old history still works
         "elo_change": w_gain,
         "date": str(date.today())
     })
     lb_save(data)
 
-    # build match verdict label
     if closeness >= 47:
         verdict = "VERY CLOSE"
     elif closeness >= 35:
@@ -443,7 +428,7 @@ async def recordwin(
     elif closeness >= 20:
         verdict = "DOMINANT"
     else:
-        verdict = "DOMINANT"
+        verdict = "DECISIVE"
 
     embed = discord.Embed(title="DUEL RECORDED", color=0x00d26a)
     embed.add_field(name="Winner",           value=w,                                  inline=True)
@@ -503,31 +488,6 @@ async def duelhistory(interaction: discord.Interaction, player: str):
         return
     await interaction.response.send_message(embed=embed)
 
-# ── Ask AI ────────────────────────────────────────────────
-
-async def hf_chat(prompt: str) -> str:
-    url = "https://api-inference.huggingface.co/models/deepseek-ai/DeepSeek-V3-0324/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"}
-    payload = {"model": "deepseek-ai/DeepSeek-V3-0324", "messages": [{"role": "user", "content": prompt}], "max_tokens": 1024}
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=payload) as resp:
-            data = await resp.json()
-            if resp.status != 200:
-                raise Exception(data.get("error", {}).get("message", str(data)))
-            return data["choices"][0]["message"]["content"]
-
-@bot.tree.command(name="ask", description="Ask an AI a question")
-async def ask(interaction: discord.Interaction, prompt: str):
-    await interaction.response.defer()
-    try:
-        answer = await hf_chat(prompt)
-        if len(answer) > 3900: answer = answer[:3900] + "…"
-        embed = discord.Embed(description=f"**{prompt}**\n\n{answer}", color=discord.Color.blue())
-        embed.set_footer(text="big funnys bot")
-        await interaction.followup.send(embed=embed)
-    except Exception as e:
-        await interaction.followup.send(f"❌ Failed: `{e}`", ephemeral=True)
-
 # ── Coinflip ──────────────────────────────────────────────
 
 @bot.tree.command(name="coinflip", description="Flip a coin")
@@ -543,148 +503,127 @@ async def coinflip(interaction: discord.Interaction):
     emoji  = "👑" if result == "Heads" else "✨"
     await msg.edit(content=None, embed=discord.Embed(title=f"{emoji} {result}!", color=discord.Color.gold()))
 
-# ── Truth or Dare ─────────────────────────────────────────
+# ── Falix Server Start ───────────────────────────────────
 
-TOD_FILE = "truthordare.json"
-
-def tod_load() -> dict:
-    if not os.path.exists(TOD_FILE):
-        return {"truths": [], "dares": []}
-    with open(TOD_FILE) as f:
-        return json.load(f)
-
-def tod_save(data: dict):
-    with open(TOD_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
-
-class TruthOrDareView(discord.ui.View):
-    def __init__(self, player1: str, player2: str):
-        super().__init__(timeout=120)
-        self.player1 = player1
-        self.player2 = player2
-
-    @discord.ui.button(label="Truth", style=discord.ButtonStyle.primary)
-    async def truth_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        data = tod_load()
-        if not data["truths"]:
-            await interaction.response.send_message(
-                "No truths added yet. Use `/addtruth` to add some.", ephemeral=True
-            )
-            return
-        question = random.choice(data["truths"])
-        embed = discord.Embed(color=0x4361ee)
-        embed.add_field(name="TRUTH", value=question, inline=False)
-        embed.set_footer(text=f"{self.player1} must answer  ·  big funnys bot")
-        await interaction.response.send_message(embed=embed)
-
-    @discord.ui.button(label="Dare", style=discord.ButtonStyle.danger)
-    async def dare_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        data = tod_load()
-        if not data["dares"]:
-            await interaction.response.send_message(
-                "No dares added yet. Use `/adddare` to add some.", ephemeral=True
-            )
-            return
-        # {player1} and {player2} can be used as placeholders in the dare text
-        dare = random.choice(data["dares"])
-        dare = dare.replace("{player1}", self.player1).replace("{player2}", self.player2)
-        embed = discord.Embed(color=0xe5383b)
-        embed.add_field(name="DARE", value=dare, inline=False)
-        embed.set_footer(text=f"{self.player1} must do this  ·  big funnys bot")
-        await interaction.response.send_message(embed=embed)
-
-
-@bot.tree.command(name="truthordare", description="Start a truth or dare between two players")
-async def truthordare(interaction: discord.Interaction, player1: str, player2: str):
-    data = tod_load()
-    t_count = len(data["truths"])
-    d_count = len(data["dares"])
-    embed = discord.Embed(
-        title="TRUTH OR DARE",
-        description=f"**{player1}** — pick your poison.\n\nTruth: answer honestly.\nDare: involves **{player2}**.",
-        color=0x1a1a2e
+def start_falix_server_sync(subdomain: str) -> tuple[bool, str]:
+    """
+    Start a Falix Minecraft server using cloudscraper to bypass Cloudflare.
+    Returns (success, message/ip).
+    """
+    # Clean the subdomain
+    clean_subdomain = subdomain.replace(".falix.gg", "").replace(".falixsrv.me", "")
+    full_ip = f"{clean_subdomain}.falix.gg"
+    url = "https://falixnodes.net/startserver"
+    
+    # Create cloudscraper session
+    scraper = cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'mobile': False
+        }
     )
-    embed.set_footer(text=f"{t_count} truths  ·  {d_count} dares in pool  ·  big funnys bot")
-    await interaction.response.send_message(embed=embed, view=TruthOrDareView(player1, player2))
+    
+    # Data to send
+    data = {
+        "IP": full_ip,
+        "cf-turnstile-response": ""
+    }
+    
+    # Headers
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Referer": "https://falixnodes.net/startserver",
+        "Origin": "https://falixnodes.net",
+    }
+    
+    try:
+        # First GET to bypass Cloudflare
+        scraper.get("https://falixnodes.net/startserver", headers=headers)
+        
+        # POST to start server
+        response = scraper.post(url, data=data, headers=headers, allow_redirects=False)
+        
+        if response.status_code == 303:
+            location = response.headers.get("location", "")
+            if "queued" in location or "success" in location:
+                return True, full_ip
+            else:
+                return False, f"Unexpected redirect: {location}"
+        elif response.status_code == 200:
+            if "queued" in response.text or "success" in response.text:
+                return True, full_ip
+            else:
+                return False, "Server responded but status unknown"
+        else:
+            return False, f"HTTP {response.status_code}"
+            
+    except Exception as e:
+        print(f"Error starting Falix server: {e}")
+        return False, str(e)
 
 
-@bot.tree.command(name="addtruth", description="Add a truth question to the pool")
-async def addtruth(interaction: discord.Interaction, question: str):
-    data = tod_load()
-    data["truths"].append(question)
-    tod_save(data)
-    await interaction.response.send_message(
-        f"Added to truths. Pool now has **{len(data['truths'])}** questions.", ephemeral=True
+@bot.tree.command(name="startserver", description="Start a Falix Minecraft server")
+async def startserver(interaction: discord.Interaction, subdomain: str):
+    """
+    Start a Minecraft server hosted on FalixNodes.
+    
+    Parameters
+    ----------
+    subdomain : str
+        Your server subdomain (e.g., 'serverforall')
+    """
+    await interaction.response.defer()
+    
+    # Clean the input
+    clean_subdomain = subdomain.replace(".falix.gg", "").replace(".falixsrv.me", "")
+    
+    if not clean_subdomain or len(clean_subdomain) < 3:
+        embed = discord.Embed(
+            description="❌ Please provide a valid subdomain.\nExample: `/startserver serverforall`",
+            color=discord.Color.red()
+        )
+        await interaction.followup.send(embed=embed)
+        return
+    
+    full_ip = f"{clean_subdomain}.falix.gg"
+    
+    # Send initial status
+    status_embed = discord.Embed(
+        description=f"🔄 Starting server at `{full_ip}`...",
+        color=discord.Color.orange()
     )
-
-
-@bot.tree.command(name="adddare", description="Add a dare to the pool — use {player1} and {player2} as placeholders")
-async def adddare(interaction: discord.Interaction, dare: str):
-    data = tod_load()
-    data["dares"].append(dare)
-    tod_save(data)
-    await interaction.response.send_message(
-        f"Added to dares. Pool now has **{len(data['dares'])}** dares.", ephemeral=True
-    )
-
-
-@bot.tree.command(name="listtruthsdares", description="See all truths and dares in the pool")
-async def listtruthsdares(interaction: discord.Interaction):
-    data = tod_load()
-    embed = discord.Embed(title="TRUTH OR DARE  ·  POOL", color=0x1a1a2e)
-
-    if data["truths"]:
+    await interaction.followup.send(embed=status_embed)
+    
+    # Run the sync function in a thread pool to avoid blocking
+    loop = asyncio.get_event_loop()
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        success, message = await loop.run_in_executor(pool, start_falix_server_sync, clean_subdomain)
+    
+    if success:
+        embed = discord.Embed(
+            title="✅ Server Starting!",
+            description=f"Server at **`{message}`** has been queued for startup.\n\nIt may take 1-2 minutes to come online.",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="Server Address", value=f"`{message}`", inline=False)
+        embed.set_footer(text="Join and play!")
+    else:
+        embed = discord.Embed(
+            title="❌ Failed to Start Server",
+            description=f"Could not start `{full_ip}`.\n\n**Error:** {message}",
+            color=discord.Color.red()
+        )
         embed.add_field(
-            name=f"TRUTHS ({len(data['truths'])})",
-            value="\n".join(f"`{i+1}.` {t}" for i, t in enumerate(data["truths"][:10])) +
-                  (f"\n*... and {len(data['truths'])-10} more*" if len(data["truths"]) > 10 else ""),
+            name="Manual Start",
+            value="Try starting it manually:\nhttps://falixnodes.net/dashboard",
             inline=False
         )
-    else:
-        embed.add_field(name="TRUTHS", value="None added yet.", inline=False)
+    
+    await interaction.edit_original_response(embed=embed)
 
-    if data["dares"]:
-        embed.add_field(
-            name=f"DARES ({len(data['dares'])})",
-            value="\n".join(f"`{i+1}.` {d}" for i, d in enumerate(data["dares"][:10])) +
-                  (f"\n*... and {len(data['dares'])-10} more*" if len(data["dares"]) > 10 else ""),
-            inline=False
-        )
-    else:
-        embed.add_field(name="DARES", value="None added yet.", inline=False)
-
-    embed.set_footer(text="big funnys bot")
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
-@bot.tree.command(name="removetruth", description="Remove a truth by its number (use /listtruthsdares to see numbers)")
-async def removetruth(interaction: discord.Interaction, number: int):
-    data = tod_load()
-    if number < 1 or number > len(data["truths"]):
-        await interaction.response.send_message(
-            f"Invalid number. There are {len(data['truths'])} truths.", ephemeral=True
-        )
-        return
-    removed = data["truths"].pop(number - 1)
-    tod_save(data)
-    await interaction.response.send_message(f"Removed: *{removed}*", ephemeral=True)
-
-
-@bot.tree.command(name="removedare", description="Remove a dare by its number (use /listtruthsdares to see numbers)")
-async def removedare(interaction: discord.Interaction, number: int):
-    data = tod_load()
-    if number < 1 or number > len(data["dares"]):
-        await interaction.response.send_message(
-            f"Invalid number. There are {len(data['dares'])} dares.", ephemeral=True
-        )
-        return
-    removed = data["dares"].pop(number - 1)
-    tod_save(data)
-    await interaction.response.send_message(f"Removed: *{removed}*", ephemeral=True)
-
-
-
+# ── Bot ready ─────────────────────────────────────────────
 
 @bot.event
 async def on_ready():
